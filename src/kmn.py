@@ -10,54 +10,75 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 
 
-def sample_center_points(y, method='all', k=100, keep_edges=False):
+def random_sampler(y, k):
+    return np.random.choice(y, k, replace=False)
+
+
+def all_sampler(y, k):
+    return y
+
+
+def k_means_sampler(y, k):
+    model = KMeans(n_clusters=k, n_jobs=-2)
+    model.fit(y.reshape(-1, 1))
+    return model.cluster_centers_
+
+
+def agglomerative_sampler(y, k):
+    model = AgglomerativeClustering(n_clusters=k, linkage='complete')
+    model.fit(y.reshape(-1, 1))
+    labels = pd.Series(model.labels_, name='label')
+    y_s = pd.Series(y, name='y')
+    df = pd.concat([y_s, labels], axis=1)
+    return df.groupby('label')['y'].mean().values
+
+
+def distance_sampler(y, k):
+    raise NotImplementedError
+
+def fixed_sampler(y, k):
+    return np.array([1, 2, 3, 4, 5])
+
+
+def sampler_from_name(name):
+    try:
+        return {
+            'random': random_sampler,
+            'distance': distance_sampler,
+            'k_means': k_means_sampler,
+            'agglomerative': agglomerative_sampler,
+            None: all_sampler
+        }[name]
+    except KeyError:
+        raise ValueError(f'unknown method {name}')
+
+
+def sample_center_points(y, method=None, k=100, keep_edges=False):
     """
     function to define kernel centers with various downsampling alternatives
     """
+    if k != 100:
+        warnings.warn('Passing k is deprected, pass a sampler method instead', DeprecationWarning)
+
+    if isinstance(method, str) or method is None:
+        warnings.warn('Passing a string as method is deprecated, pass a sampler method instead', DeprecationWarning)
+        method = sampler_from_name(method)
 
     # make sure y is 1D
     y = y.ravel()
 
-    # keep all points as kernel centers
-    if method == 'all':
-        return y
-
     # retain outer points to ensure expressiveness at the target borders
+    centers = np.empty(0)
     if keep_edges:
         y = np.sort(y)
         centers = np.array([y[0], y[-1]])
         y = y[1:-1]
         # adjust k such that the final output has size k
         k -= 2
-    else:
-        centers = np.empty(0)
 
-    if method == 'random':
-        cluster_centers = np.random.choice(y, k, replace=False)
-
-    # iteratively remove part of pairs that are closest together until everything is at least 'd' apart
-    elif method == 'distance':
-        raise NotImplementedError
-
-    # use 1-D k-means clustering
-    elif method == 'k_means':
-        model = KMeans(n_clusters=k, n_jobs=-2)
-        model.fit(y.reshape(-1, 1))
-        cluster_centers = model.cluster_centers_
-
-    # use agglomerative clustering
-    elif method == 'agglomerative':
-        model = AgglomerativeClustering(n_clusters=k, linkage='complete')
-        model.fit(y.reshape(-1, 1))
-        labels = pd.Series(model.labels_, name='label')
-        y_s = pd.Series(y, name='y')
-        df = pd.concat([y_s, labels], axis=1)
-        cluster_centers = df.groupby('label')['y'].mean().values
-
-    else:
-        raise ValueError("unknown method '{}'".format(method))
-
+    cluster_centers = method(y, k)
     return np.append(centers, cluster_centers)
+
 
 
 class KernelMixtureNetwork(BaseEstimator):
